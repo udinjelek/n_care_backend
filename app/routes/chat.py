@@ -1,9 +1,13 @@
 from flask import Blueprint, jsonify, request
+from app.utils.socket_events import socketio 
 from app.utils.database import get_db_connection
 from app.error_handlers import handle_database_error
 from app.helper._json_transformer import transform_to_json_send
 import sqlite3
 from app.utils.auth_utils import validate_bearer_token
+from datetime import datetime
+from flask_socketio import emit
+
 
 # Create a Blueprint object for chat routes
 chat_bp = Blueprint('chat', __name__)
@@ -18,13 +22,17 @@ def get_sidebar_chat():
         conn = get_db_connection()
         cursor = conn.cursor()
 
+        # ambil data user
         cursor.execute('''
                     SELECT name, username, status, is_admin , photo_url from users where id = :self_id
         ''', {'self_id': self_id})
         dataSelf = cursor.fetchone()
 
+        # set id menjadi id_user yg dipakai
         id_used = self_id
+        # check apakah data user adalah admin
         if dataSelf[3] == 1:
+            # jika iya, maka, set id_user menjadi id admin
             id_used = 0
         
         # Execute the query to fetch all chat messages
@@ -172,35 +180,60 @@ def get_chat_history():
         # If a generic exception occurs, raise it with a different message
         raise Exception('An unexpected error occurred: {}'.format(str(e)))
 
-@chat_bp.route('/api/chat_send', methods=['POST'])
-def set_chat_send():
+@chat_bp.route('/api/send_message', methods=['POST'])
+def set_send_message():
     try:
+        data = request.get_json()
         # Get the user ID from the request parameters
-        self_id = request.args.get('self_id')
-        target_id = request.args.get('target_id')
-        message = request.args.get('message')
+        self_id = data.get('self_id')
+        target_id = data.get('target_id')
+        message = data.get('message')
         # Connect to SQLite database
         conn = get_db_connection()
         cursor = conn.cursor()
-
-        # Execute the query to fetch all chat messages
+        
+          # ambil data user
         cursor.execute('''
-            SELECT * FROM (
-                SELECT * FROM chat_message cm 
-                WHERE (sender_id = :self_id AND receive_id = :target_id) 
-                   OR (sender_id = :target_id AND receive_id = :self_id)
-                ORDER BY id DESC
-                LIMIT 5
-            ) ORDER BY id ASC;
-        ''', {'self_id': self_id, 'target_id': target_id})
-        dataQuery = cursor.fetchall()
+                    SELECT name, username, status, is_admin , photo_url from users where id = :self_id
+        ''', {'self_id': self_id})
+        dataSelf = cursor.fetchone()
 
+        # set id menjadi id_user yg dipakai
+        id_used = self_id
+        # check apakah data user adalah admin
+        if dataSelf[3] == 1:
+            # jika iya, maka, set id_user menjadi id admin
+            id_used = 0
+        
+        # mapping variable for query purpose
+        sender_id = self_id
+        sender_id_alias = id_used
+        receive_id = target_id
+        timestamp = convertCurentTimeToNumber()
+        message = message
+        caption = 'no caption'
+        sender_firstname = dataSelf[0]
+        sender_username = dataSelf[1]
+
+        data_to_insert = (sender_id, sender_id_alias, receive_id, timestamp, message, caption, sender_firstname, sender_username)
+        sql_insert = '''INSERT INTO chat_message (sender_id, sender_id_alias, receive_id, timestamp, message, caption, sender_firstname, sender_username) 
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?)'''
+
+        
+        # Execute the SQL INSERT statement
+        cursor.execute(sql_insert, data_to_insert)
+        # Commit changes to the database
+        conn.commit()
         # Close the connection to the database
         conn.close()
-
-        # Convert the query result to a list of dictionaries
-        data_json = [dict(row) for row in dataQuery]
         
+        
+        # Convert the query result to a list of dictionaries
+        data_json = 'success'
+        
+        socketio.emit('new_message', {'sender_id': data.get('self_id'), 'message': data.get('message')})
+
+
         # Return the JSON response
         json_send = transform_to_json_send(data_json)
         return jsonify(json_send)
@@ -210,3 +243,16 @@ def set_chat_send():
     except Exception as e:
         # If a generic exception occurs, raise it with a different message
         raise Exception('An unexpected error occurred: {}'.format(str(e)))
+    
+
+def convertCurentTimeToNumber():
+    current_datetime = datetime.now()
+    datetime_in_decimal = float(current_datetime.timestamp())  
+    return datetime_in_decimal
+
+def convertTextDatetimeToNumber(text_date_time):
+    # Convert the decimal timestamp to a datetime object
+    datetime_obj = datetime.fromtimestamp(text_date_time)
+    # Format the datetime object as "YYYY-MM-DD HH:MM:SS"
+    formatted_datetime = datetime_obj.strftime("%Y-%m-%d %H:%M:%S")
+    return formatted_datetime
