@@ -231,7 +231,12 @@ def set_send_message():
         # Convert the query result to a list of dictionaries
         data_json = 'success'
         
-        socketio.emit('new_message', {'sender_id': data.get('self_id'), 'message': data.get('message')})
+        socketio.emit('new_message', {'sender_id': sender_id,
+                                      'sender_id_alias': sender_id_alias,
+                                      'receive_id': receive_id,
+                                      'message': message,
+                                      'sender_firstname': sender_firstname
+                                      })
 
 
         # Return the JSON response
