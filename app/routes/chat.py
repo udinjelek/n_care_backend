@@ -58,17 +58,21 @@ def get_sidebar_chat():
                     WHERE sender_id_alias = :id_used OR receive_id = :id_used
                     ORDER BY "timestamp" DESC
                 )
-                SELECT
-                    lm.object_chat as userid,
-                    users.name,
-                    SUBSTRING(lm.message, 1, 20) || '...' as latestMessage,
-                    lm."timestamp",
-                    false as isRead,
-                    users.photo_url as photoUrl
-                FROM LatestMessages lm
-                left join users 
-                on object_chat = users.id
-                WHERE lm.row_num = 1;
+                select * from (
+                                    SELECT
+                                        lm.object_chat as userid,
+                                        users.name,
+                                        SUBSTRING(lm.message, 1, 20) || '...' as latestMessage,
+                                        lm."timestamp",
+                                        false as isRead,
+                                        users.photo_url as photoUrl
+                                    FROM LatestMessages lm
+                                    left join users 
+                                    on object_chat = users.id
+                                    WHERE lm.row_num = 1
+                              ) data_selected
+                order by data_selected."timestamp" desc
+                ;
         ''', {'id_used': id_used})
 
         dataQuery = cursor.fetchall()
@@ -129,6 +133,12 @@ def get_chat_history():
                            END AS sender_name_used ,
                            admin_sender.is_admin sender_admin, 
                            admin_receive.is_admin receive_admin , 
+                           case 
+                                WHEN cm.sender_id = :self_id THEN 1
+                                ELSE 0
+                           END AS group_ally,
+                           true is_first,
+                           true is_last,
                            cm.*  
                 from chat_message cm
                 left join      users admin_receive
@@ -150,6 +160,12 @@ def get_chat_history():
                            END AS sender_name_used ,
                            admin_sender.is_admin sender_admin, 
                            admin_receive.is_admin receive_admin , 
+                           case 
+                                WHEN cm.sender_id_alias = 0 THEN 1
+                                ELSE 0
+                           END AS group_ally,
+                           true is_first,
+                           true is_last,
                            cm.*  
                 from chat_message cm
                 left join      users admin_receive
@@ -224,6 +240,18 @@ def set_send_message():
         cursor.execute(sql_insert, data_to_insert)
         # Commit changes to the database
         conn.commit()
+
+
+        cursor.execute('''
+                    SELECT photo_url from users where id = :sender_id_alias
+        ''', {'sender_id_alias': sender_id_alias})
+        data_sender_id_alias = cursor.fetchone()
+
+        cursor.execute('''
+                    SELECT photo_url from users where id = :receive_id
+        ''', {'receive_id': receive_id})
+        data_receive_id = cursor.fetchone()
+
         # Close the connection to the database
         conn.close()
         
@@ -235,7 +263,10 @@ def set_send_message():
                                       'sender_id_alias': sender_id_alias,
                                       'receive_id': receive_id,
                                       'message': message,
-                                      'sender_firstname': sender_firstname
+                                      'sender_firstname': sender_firstname,
+                                      'timestamp': timestamp,
+                                      'photo_url_sender_id_alias' : data_sender_id_alias[0],
+                                      'photo_url_receive_id' : data_receive_id[0],
                                       })
 
 
