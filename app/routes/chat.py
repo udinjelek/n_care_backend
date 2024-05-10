@@ -1,4 +1,4 @@
-from flask import Blueprint, jsonify, request
+from flask import Blueprint, jsonify, request, Flask, send_from_directory
 from app.utils.socket_events import socketio 
 from app.utils.database import get_db_connection
 from app.error_handlers import handle_database_error
@@ -7,7 +7,10 @@ import sqlite3
 from app.utils.auth_utils import validate_bearer_token
 from datetime import datetime
 from flask_socketio import emit
-
+import os
+from werkzeug.utils import secure_filename
+from app.config import Config
+from app import app
 
 # Create a Blueprint object for chat routes
 chat_bp = Blueprint('chat', __name__)
@@ -139,6 +142,11 @@ def get_chat_history():
                            END AS group_ally,
                            true is_first,
                            true is_last,
+                           case 
+                                WHEN cm.file_name IS NULL THEN ''
+                                WHEN cm.file_name != '' THEN :prefixDownload || '/' || cm.file_name
+                                ELSE cm.file_name
+                           END AS attachment_url,
                            cm.*  
                 from chat_message cm
                 left join      users admin_receive
@@ -148,8 +156,8 @@ def get_chat_history():
                 where ( cm.sender_id_alias = :self_id) 
                 or    ( cm.receive_id = :self_id)
                 order by cm.id;
-            ''', {'self_id': self_id})
-        
+            ''', {'self_id': self_id , 'prefixDownload': os.path.join(Config.API_ENDPOINT,Config.GLOBAL_FILE)})
+        # os.path.join(Config.API_ENDPOINT,Config.GLOBAL_FILE) 
         #  jika user adalah admin, maka query di masking, dimana nama target admin di sembunyikan dan di rename dengan nama "customer care"
         else:
             # Execute the query to fetch all chat messages
@@ -166,6 +174,11 @@ def get_chat_history():
                            END AS group_ally,
                            true is_first,
                            true is_last,
+                           case 
+                                WHEN cm.file_name IS NULL THEN ''
+                                WHEN cm.file_name != '' THEN :prefixDownload || '/' ||cm.file_name
+                                ELSE cm.file_name
+                           END AS attachment_url ,
                            cm.*  
                 from chat_message cm
                 left join      users admin_receive
@@ -175,7 +188,7 @@ def get_chat_history():
                 where ( cm.sender_id_alias = :target_id ) 
                 or    ( cm.receive_id = :target_id )
                 order by cm.id;
-            ''', {'target_id': target_id})
+            ''', {'target_id': target_id, 'prefixDownload': os.path.join(Config.API_ENDPOINT,Config.GLOBAL_FILE)})
         dataQuery = cursor.fetchall()
 
         # Close the connection to the database
@@ -196,19 +209,29 @@ def get_chat_history():
         # If a generic exception occurs, raise it with a different message
         raise Exception('An unexpected error occurred: {}'.format(str(e)))
 
+# @chat_bp.route('/api/send_message', methods=['POST'])
+# def set_send_message():
+    
+#     # Get the user ID from the request parameters
+#     self_id =  self_id = request.form.get('self_id')
+#     target_id = request.form.get('target_id')
+#     message = request.form.get('message')
+#     return {'data':self_id}
+
 @chat_bp.route('/api/send_message', methods=['POST'])
 def set_send_message():
     try:
-        data = request.get_json()
-        # Get the user ID from the request parameters
-        self_id = data.get('self_id')
-        target_id = data.get('target_id')
-        message = data.get('message')
+
+        self_id = request.form.get('self_id')
+        target_id = request.form.get('target_id')
+        message = request.form.get('message')
+        attachmentData = request.files.get('file')
         # Connect to SQLite database
         conn = get_db_connection()
         cursor = conn.cursor()
         
-          # ambil data user
+        resultAttachment = attachFile(attachmentData)
+        # ambil data user
         cursor.execute('''
                     SELECT name, username, status, is_admin , photo_url from users where id = :self_id
         ''', {'self_id': self_id})
@@ -230,10 +253,12 @@ def set_send_message():
         caption = 'no caption'
         sender_firstname = dataSelf[0]
         sender_username = dataSelf[1]
+        mime_type = resultAttachment['mime_type']
+        file_name = resultAttachment['file_name']
 
-        data_to_insert = (sender_id, sender_id_alias, receive_id, timestamp, message, caption, sender_firstname, sender_username)
-        sql_insert = '''INSERT INTO chat_message (sender_id, sender_id_alias, receive_id, timestamp, message, caption, sender_firstname, sender_username) 
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?)'''
+        data_to_insert = (sender_id, sender_id_alias, receive_id, timestamp, message, caption, sender_firstname, sender_username, mime_type, file_name)
+        sql_insert = '''INSERT INTO chat_message (sender_id, sender_id_alias, receive_id, timestamp, message, caption, sender_firstname, sender_username, mime_type, file_name) 
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)'''
 
         
         # Execute the SQL INSERT statement
@@ -259,6 +284,7 @@ def set_send_message():
         # Convert the query result to a list of dictionaries
         data_json = 'success'
         
+        # untuk emit websockets
         socketio.emit('new_message', {'sender_id': sender_id,
                                       'sender_id_alias': sender_id_alias,
                                       'receive_id': receive_id,
@@ -267,6 +293,8 @@ def set_send_message():
                                       'timestamp': timestamp,
                                       'photo_url_sender_id_alias' : data_sender_id_alias[0],
                                       'photo_url_receive_id' : data_receive_id[0],
+                                      'file_name': file_name,
+                                      'attachment_url': os.path.join(Config.API_ENDPOINT,Config.GLOBAL_FILE,file_name)
                                       })
 
 
@@ -280,6 +308,57 @@ def set_send_message():
         # If a generic exception occurs, raise it with a different message
         raise Exception('An unexpected error occurred: {}'.format(str(e)))
     
+@chat_bp.route('/api/upload_file', methods=['POST'])
+def set_upload_file():
+    try:
+        result= 'success'
+        if result== 'success':
+            if 'file' not in request.files:
+                result={'error': 'No file part'}
+
+        if result== 'success':
+            file = request.files['file']
+            if file.filename == '':
+                result={'error': 'No selected file'}
+
+        if result== 'success':
+            result = Config.UPLOAD_FOLDER
+            filename = secure_filename(file.filename)
+            file.save(os.path.join(Config.UPLOAD_FOLDER, filename))
+            file_url = os.path.join(Config.API_ENDPOINT,Config.GLOBAL_FILE,filename)
+            result = {'filename': filename, 'url': file_url}
+
+        # data = request.get_json()
+        # Return the JSON response
+        
+        json_send = transform_to_json_send(result)
+        return jsonify(json_send)
+    except sqlite3.Error as e:
+        # If a SQLite database error occurs, return an error response
+        return handle_database_error('SQLite database error occurred: {}'.format(str(e)))
+    except Exception as e:
+        # If a generic exception occurs, raise it with a different message
+        raise Exception('An unexpected error occurred: {}'.format(str(e)))
+
+def attachFile(dataAttachment):
+    step= 'pass'
+    result={'mime_type': '-' , 'file_name':''}
+
+    if step== 'pass':
+        file = dataAttachment
+        if file.filename == '':
+            step = 'failed 01'
+
+    if step== 'pass':
+        result = Config.UPLOAD_FOLDER
+        filename = secure_filename(file.filename)
+        # new_filename = getNewFilename(file)
+        file.save(os.path.join(Config.UPLOAD_FOLDER, filename))
+        result = {'mime_type': get_extension(filename), 'file_name': filename }
+        # file_url = os.path.join(Config.API_ENDPOINT,Config.GLOBAL_FILE,filename)
+        # result = {'filename': filename, 'url': file_url}
+
+    return result
 
 def convertCurentTimeToNumber():
     current_datetime = datetime.now()
@@ -292,3 +371,15 @@ def convertTextDatetimeToNumber(text_date_time):
     # Format the datetime object as "YYYY-MM-DD HH:MM:SS"
     formatted_datetime = datetime_obj.strftime("%Y-%m-%d %H:%M:%S")
     return formatted_datetime
+
+def get_extension(input_str):
+    parts = input_str.split('.')
+    last_part = parts[-1]
+    return last_part
+
+def getNewFilename(file):
+    current_datetime = datetime.now()
+    formatted_datetime = current_datetime.strftime('%Y%m%d_%H%M%S')
+    original_filename, extension = os.path.splitext(file.filename)
+    new_filename = f"{original_filename}_{formatted_datetime}{extension}"
+    return new_filename
