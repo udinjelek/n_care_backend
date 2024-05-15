@@ -33,3 +33,8 @@ def download_file(filename):
         # return file_path # pake buat trace
         error_message = 'File not found.'
         return render_template('error.html', error_message=error_message), 404
+    
+@app.route('/')
+def hello_world():
+    error_message = 'Path Not Valid.'
+    return render_template('error.html', error_message=error_message), 404
