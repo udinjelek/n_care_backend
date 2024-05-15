@@ -7,10 +7,10 @@ import os
 app = Flask(__name__)
 app.config.from_object(Config)  # Load configurations from config.py
 
-socketio = SocketIO(app)
-socketio.init_app(app, cors_allowed_origins="*",transports=['websocket'])
-
 CORS(app)
+socketio = SocketIO(app, cors_allowed_origins="*",transports=['websocket'])
+
+
 # Register the blueprints
 from app.routes.users import users_bp
 from app.routes.chat import chat_bp
