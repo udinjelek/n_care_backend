@@ -7,8 +7,8 @@ import os
 app = Flask(__name__)
 app.config.from_object(Config)  # Load configurations from config.py
 CORS(app)
-socketio = SocketIO(app, cors_allowed_origins="*") # Initialize SocketIO
-
+socketio = SocketIO(app)
+socketio.init_app(app, cors_allowed_origins="*")
 # Register the blueprints
 from app.routes.users import users_bp
 from app.routes.chat import chat_bp
