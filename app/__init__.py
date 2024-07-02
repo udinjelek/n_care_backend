@@ -14,8 +14,10 @@ socketio = SocketIO(app, cors_allowed_origins="*",transports=['websocket'])
 # Register the blueprints
 from app.routes.users import users_bp
 from app.routes.chat import chat_bp
+from app.routes.satnusapersada import satnusapersada_bp
 app.register_blueprint(users_bp)
 app.register_blueprint(chat_bp)
+app.register_blueprint(satnusapersada_bp)
 
 # Import and register SocketIO events
 from app.utils.socket_events import register_socket_events

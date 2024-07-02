@@ -18,7 +18,7 @@ def get_users():
 
         # Close the connection to the database
         conn.close()
-
+        print(dataQuery)
         # Convert the query result to a JSON format
         data_json = [dict(row) for row in dataQuery]
 
